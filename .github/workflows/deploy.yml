@@ -50,4 +50,4 @@ jobs:
             docker pull ${{ secrets.ECR_REGISTRY }}/casino-frontend:latest
             docker stop casino_frontend || true
             docker rm casino_frontend || true
-            docker run -d --name casino_frontend -p 80:8080 ${{ secrets.ECR_REGISTRY }}/casino-frontend:latest
+            docker run -d --name casino_frontend -p 80:8080 -e BACKEND_HOST=10.0.143.21 ${{ secrets.ECR_REGISTRY }}/casino-frontend:latest

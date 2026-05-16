@@ -20,7 +20,7 @@ RUN npm run build
 FROM nginxinc/nginx-unprivileged:alpine AS runtime
 
 # Copiar configuración de Nginx (reverse proxy + SPA fallback)
-COPY nginx.conf /etc/nginx/conf.d/default.conf
+COPY nginx.conf /etc/nginx/templates/default.conf.template
 
 # IMPORTANTE: Angular 17 con application builder genera en browser/
 # No apuntar a dist/casino-frontend — faltaría la subcarpeta browser/
