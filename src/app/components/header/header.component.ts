@@ -23,7 +23,7 @@ import { AuthService } from '../../services/auth.service';
       </nav>
 
       <div class="acciones" *ngIf="auth.autenticado(); else anon">
-        <a routerLink="/profile" class="saldo-pill" title="Mi perfil">
+        <a routerLink="/profile" class="saldo-pill" title="Mi perfil locoooooooo">
           <span class="dot"></span>
           <span class="user">{{ auth.usuario()?.username }}</span>
           <span class="ficha">$ {{ displaySaldo.val | number:'1.0-0' }}</span>
