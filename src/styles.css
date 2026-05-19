@@ -49,7 +49,7 @@ input:focus, select:focus {
   transition: transform .08s ease, filter .15s ease;
 }
 .btn-primario {
-  background: linear-gradient(135deg, #0d7a56, #10b981);
+  background: linear-gradient(135deg, #0d7a56, #ec0000);
   color: #fff;
   box-shadow: 0 4px 16px rgba(16,185,129,0.25);
 }
