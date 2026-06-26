@@ -1,29 +1,27 @@
-name: Deploy Frontend
+name: CI/CD - casino-frontend (build/push -> deploy)
 
 on:
   push:
-    branches:
-      - deploy
+    branches: [ deploy ]
   workflow_dispatch:
-    inputs:
-      version:
-        description: 'Version tag (ej: v1.2.0)'
-        required: true
-        default: 'v1.0.0'
 
 env:
   AWS_REGION: us-east-1
-  ECR_REPOSITORY: casino-frontend
+  CLUSTER_NAME: casino-eks
+  SERVICE_NAME: casino-frontend
+  IMAGE_VERSION: v1.0.0
 
 jobs:
-  build-push-deploy:
-    name: Build, Push and Deploy
+  build-push:
     runs-on: ubuntu-latest
+    outputs:
+      image_tag: ${{ github.sha }}
+      registry: ${{ steps.ecr.outputs.registry }}
     steps:
-      - name: Checkout code
+      - name: 1. Descargar el codigo del repo
         uses: actions/checkout@v4
 
-      - name: Configure AWS credentials
+      - name: 2. Configurar credenciales de AWS (temporales del lab)
         uses: aws-actions/configure-aws-credentials@v4
         with:
           aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
@@ -31,30 +29,57 @@ jobs:
           aws-session-token: ${{ secrets.AWS_SESSION_TOKEN }}
           aws-region: ${{ env.AWS_REGION }}
 
-      - name: Login to Amazon ECR
-        id: login-ecr
+      - name: 3. Login en Amazon ECR
+        id: ecr
         uses: aws-actions/amazon-ecr-login@v2
 
-      - name: Build, tag and push image to ECR
-        id: build-image
+      - name: 4. Build y push (3 tags - vX.Y.Z, latest, sha)
         env:
-          ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
-          IMAGE_TAG: ${{ github.event.inputs.version || format('v1.0.{0}', github.run_number) }}
+          REGISTRY: ${{ steps.ecr.outputs.registry }}
         run: |
-          docker build -t $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG -t $ECR_REGISTRY/$ECR_REPOSITORY:${{ github.sha }} .
-          docker push $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
-          docker push $ECR_REGISTRY/$ECR_REPOSITORY:${{ github.sha }}
-          echo "image=$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG" >> $GITHUB_OUTPUT
+          docker build \
+            -t "$REGISTRY/$SERVICE_NAME:$IMAGE_VERSION" \
+            -t "$REGISTRY/$SERVICE_NAME:latest" \
+            -t "$REGISTRY/$SERVICE_NAME:${{ github.sha }}" \
+            .
+          docker push "$REGISTRY/$SERVICE_NAME:$IMAGE_VERSION"
+          docker push "$REGISTRY/$SERVICE_NAME:latest"
+          docker push "$REGISTRY/$SERVICE_NAME:${{ github.sha }}"
 
-      - name: Deploy to EC2 frontend
-        uses: appleboy/ssh-action@v1.0.3
+  deploy:
+    runs-on: ubuntu-latest
+    needs: build-push
+    steps:
+      - name: 1. Descargar el codigo del repo
+        uses: actions/checkout@v4
+
+      - name: 2. Configurar credenciales de AWS (temporales del lab)
+        uses: aws-actions/configure-aws-credentials@v4
         with:
-          host: ${{ secrets.EC2_FRONTEND_HOST }}
-          username: ec2-user
-          key: ${{ secrets.EC2_SSH_KEY }}
-          script: |
-            aws ecr get-login-password --region us-east-1 | docker login --username AWS --password-stdin ${{ secrets.ECR_REGISTRY }}
-            docker pull ${{ steps.build-image.outputs.image }}
-            docker stop casino_frontend || true
-            docker rm casino_frontend || true
-            docker run -d --name casino_frontend -p 80:8080 -e BACKEND_HOST=10.0.143.21 ${{ steps.build-image.outputs.image }}
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-session-token: ${{ secrets.AWS_SESSION_TOKEN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: 3. Instalar kubectl
+        run: |
+          curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl"
+          chmod +x kubectl
+          sudo mv kubectl /usr/local/bin/kubectl
+
+      - name: 4. Conectar kubectl al cluster EKS
+        run: aws eks update-kubeconfig --name "$CLUSTER_NAME" --region "$AWS_REGION"
+
+      - name: 5. Desplegar en EKS
+        env:
+          REGISTRY: ${{ needs.build-push.outputs.registry }}
+          IMAGE_TAG: ${{ needs.build-push.outputs.image_tag }}
+        run: |
+          sed -i "s|<ACCOUNT_ID>.dkr.ecr.<REGION>.amazonaws.com|$REGISTRY|g; s|:latest|:$IMAGE_TAG|g" k8s/deployment.yaml
+          kubectl apply -f k8s/deployment.yaml
+          kubectl apply -f k8s/service.yaml
+
+      - name: 6. Verificar el rollout
+        run: |
+          kubectl rollout status deployment/$SERVICE_NAME --timeout=180s
+          kubectl get pods -l app=$SERVICE_NAME -o wide
